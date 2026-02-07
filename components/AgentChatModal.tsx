@@ -1,7 +1,14 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { agentChat } from "@/lib/agent";
+import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  getWsUrl,
+  createChat,
+  makeSubscribeMessage,
+  makeChatMessage,
+  type IncomingMessage,
+  type ChatMessage as ApiChatMessage,
+} from "@/lib/chat-api";
 
 export type Project = {
   id: string;
@@ -18,43 +25,175 @@ type Props = {
   onClose: () => void;
 };
 
+function chatMessagesToDisplay(messages: ApiChatMessage[]): Message[] {
+  return (messages ?? []).map((m) => ({
+    role: m.role === "assistant" ? "agent" : "user",
+    content: m.content ?? "",
+  }));
+}
+
 export default function AgentChatModal({ project, open, onClose }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<
+    "idle" | "connecting" | "open" | "closed" | "error"
+  >("idle");
+  const [agentStatus, setAgentStatus] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const closeWs = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setConnectionStatus("closed");
+  }, []);
+
   useEffect(() => {
-    if (open) {
+    if (!open || !project) {
       setMessages([]);
       setInput("");
       setError(null);
+      setChatId(null);
+      setAgentStatus(null);
+      closeWs();
+      return;
     }
-  }, [open, project?.id]);
+
+    let cancelled = false;
+    const wsUrl = getWsUrl();
+
+    setConnectionStatus("connecting");
+    setError(null);
+
+    createChat(project?.title)
+      .then((chat) => {
+        if (cancelled) return;
+        setChatId(chat.id);
+
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          if (cancelled || !wsRef.current) return;
+          setConnectionStatus("open");
+          ws.send(makeSubscribeMessage(chat.id));
+        };
+
+        ws.onmessage = (event) => {
+          if (cancelled) return;
+          try {
+            const data = JSON.parse(event.data) as IncomingMessage;
+            console.log(data);
+            switch (data.type) {
+              case "connected":
+                break;
+              case "history":
+                setMessages(chatMessagesToDisplay(data.messages ?? []));
+                break;
+              case "user_message":
+                break;
+              case "assistant_message": {
+                const delta = (data.content ?? "") as string;
+                setMessages((prev) => {
+                  const last = prev[prev.length - 1];
+                  if (last?.role === "agent") {
+                    return [
+                      ...prev.slice(0, -1),
+                      { role: "agent", content: last.content + delta },
+                    ];
+                  }
+                  return [...prev, { role: "agent", content: delta }];
+                });
+                setLoading(false);
+                break;
+              }
+              case "agent_status":
+                setAgentStatus(data.message ?? null);
+                break;
+              case "tool_use":
+                break;
+              case "result":
+                setAgentStatus(null);
+                setLoading(false);
+                break;
+              case "error":
+                setAgentStatus(null);
+                setError(data.error ?? "Error");
+                setLoading(false);
+                break;
+              default:
+                break;
+            }
+          } catch {}
+        };
+
+        ws.onclose = (event) => {
+          if (!cancelled) {
+            setConnectionStatus("closed");
+            if (event.code !== 1000 && event.code !== 1005) {
+              setConnectionStatus("error");
+              setError(
+                event.reason ||
+                  (event.code === 1006
+                    ? "Cannot reach server. Is the backend running at NEXT_PUBLIC_API_URL?"
+                    : `WebSocket closed (${event.code})`),
+              );
+            }
+          }
+        };
+
+        ws.onerror = () => {
+          if (!cancelled) {
+            setConnectionStatus("error");
+            setError(
+              "WebSocket error. Check backend is running and NEXT_PUBLIC_API_URL is correct.",
+            );
+          }
+        };
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : "Failed to create chat",
+          );
+          setConnectionStatus("error");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      closeWs();
+    };
+  }, [open, project?.id, project?.title, closeWs]);
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+    listRef.current?.scrollTo({
+      top: listRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [messages]);
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
-    if (!text || loading || !project) return;
+    if (
+      !text ||
+      loading ||
+      !chatId ||
+      !wsRef.current ||
+      wsRef.current.readyState !== WebSocket.OPEN
+    )
+      return;
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setLoading(true);
     setError(null);
-    try {
-      const response = await agentChat(text);
-      setMessages((prev) => [...prev, { role: "agent", content: response }]);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Something went wrong";
-      setError(message);
-      setMessages((prev) => [...prev, { role: "agent", content: `Error: ${message}` }]);
-    } finally {
-      setLoading(false);
-    }
+    wsRef.current.send(makeChatMessage(chatId, text));
   }
 
   if (!open) return null;
@@ -73,9 +212,20 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
         aria-labelledby="chat-modal-title"
       >
         <div className="flex items-center justify-between border-b border-gray-800/80 px-4 py-3">
-          <h2 id="chat-modal-title" className="font-semibold text-white">
-            {project?.title ?? "Agent"}
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 id="chat-modal-title" className="font-semibold text-white">
+              {project?.title ?? "Agent"}
+            </h2>
+            {connectionStatus === "connecting" && (
+              <span className="text-xs text-gray-500">Connecting…</span>
+            )}
+            {connectionStatus === "open" && (
+              <span
+                className="h-2 w-2 rounded-full bg-tron-blue shadow-tron-glow-sm"
+                title="Connected"
+              />
+            )}
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -90,9 +240,15 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
           className="flex-1 overflow-y-auto px-4 py-3"
           style={{ minHeight: "200px", maxHeight: "50vh" }}
         >
-          {messages.length === 0 && (
+          {messages.length === 0 && connectionStatus !== "connecting" && (
             <p className="text-center text-sm text-gray-500">
-              Send a message to chat with the agent.
+              {connectionStatus === "open"
+                ? "Send a message to chat with the agent."
+                : connectionStatus === "error"
+                  ? error
+                    ? `Connection failed: ${error} Close and try again.`
+                    : "Connection failed. Close and try again."
+                  : "Send a message to chat with the agent."}
             </p>
           )}
           <ul className="flex flex-col gap-3">
@@ -102,7 +258,7 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
                 className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 <span
-                  className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                  className={`max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${
                     m.role === "user"
                       ? "bg-tron-blue/20 text-tron-blue border border-tron-blue/30"
                       : "bg-gray-800/80 text-gray-200 border border-gray-700/50"
@@ -124,7 +280,10 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
             <p className="mt-2 text-center text-xs text-red-400">{error}</p>
           )}
         </div>
-        <form onSubmit={handleSubmit} className="border-t border-gray-800/80 p-3">
+        <form
+          onSubmit={handleSubmit}
+          className="border-t border-gray-800/80 p-3"
+        >
           <div className="flex gap-2">
             <input
               type="text"
@@ -132,17 +291,22 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
               onChange={(e) => setInput(e.target.value)}
               placeholder="Message the agent…"
               className="min-h-11 flex-1 rounded-lg border border-gray-700 bg-tron-black px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-tron-blue/50 focus:outline-none focus:ring-1 focus:ring-tron-blue/50"
-              disabled={loading}
+              disabled={loading || connectionStatus !== "open"}
               autoFocus
             />
             <button
               type="submit"
-              disabled={loading || !input.trim()}
+              disabled={loading || !input.trim() || connectionStatus !== "open"}
               className="rounded-lg border border-tron-blue/60 bg-tron-blue/10 px-4 py-2 text-sm font-medium text-tron-blue transition-colors hover:border-tron-blue hover:bg-tron-blue/20 disabled:opacity-50"
             >
               Send
             </button>
           </div>
+          {agentStatus && (
+            <p className="mt-2 text-xs text-tron-blue/80">
+              Agent: {agentStatus}
+            </p>
+          )}
         </form>
       </div>
     </>
@@ -151,8 +315,18 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
 
 function CloseIcon({ className }: { className?: string }) {
   return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+    <svg
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M6 18L18 6M6 6l12 12"
+      />
     </svg>
   );
 }
