@@ -1,14 +1,65 @@
-* {
-  box-sizing: border-box;
-  padding: 0;
-  margin: 0;
+@import "tailwindcss";
+
+@theme {
+  /* Tron palette */
+  --color-tron-black: #0a0a0f;
+  --color-tron-panel: #12121a;
+  --color-tron-blue: #00d4ff;
+  --color-tron-blue-dim: #00a8cc;
+  --color-tron-blue-glow: rgba(0, 212, 255, 0.4);
+  --color-tron-orange: #ff9500;
+  /* Shadows */
+  --shadow-tron-glow: 0 0 20px rgba(0, 212, 255, 0.3);
+  --shadow-tron-glow-sm: 0 0 10px rgba(0, 212, 255, 0.2);
+  --shadow-tron-glow-lg: 0 0 32px rgba(0, 212, 255, 0.25);
 }
 
-html,
-body {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: system-ui, sans-serif;
+@layer base {
+  * {
+    @apply box-border;
+  }
+  html,
+  body {
+    @apply min-h-screen bg-tron-black text-gray-200 antialiased;
+  }
+  /* Subtle Tron grid background */
+  body {
+    background-image:
+      linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+    background-size: 48px 48px;
+    background-position: 0 0;
+  }
+}
+
+@layer utilities {
+  /* Soft pulse for active indicators */
+  @keyframes tron-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 10px rgba(0, 212, 255, 0.4); }
+    50% { opacity: 0.85; box-shadow: 0 0 16px rgba(0, 212, 255, 0.5); }
+  }
+  /* Shimmer for header underline */
+  @keyframes tron-shimmer {
+    0% { background-position: -100% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .animate-tron-pulse {
+    animation: tron-pulse 2.5s ease-in-out infinite;
+  }
+  .animate-tron-shimmer {
+    background: linear-gradient(
+      90deg,
+      #00d4ff 0%,
+      rgba(255, 255, 255, 0.4) 50%,
+      #00d4ff 100%
+    );
+    background-size: 200% 100%;
+    animation: tron-shimmer 3s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-tron-pulse,
+    .animate-tron-shimmer {
+      animation: none;
+    }
+  }
 }
