@@ -1,13 +1,13 @@
 /**
  * at-backend integration: REST + WebSocket chat.
  *
- * Set NEXT_PUBLIC_API_URL to the backend origin only (no path):
- * - Local:   http://localhost:8000
- * - Railway: https://at-backend-production-8139.up.railway.app
+ * NEXT_PUBLIC_API_URL must be set at BUILD time (Next.js bakes it into the client).
+ * - No trailing slash: use https://...railway.app not https://...railway.app/
+ * - Local:   http://localhost:8000  → ws://localhost:8000/ws
+ * - Production: https://at-backend-production-8139.up.railway.app → wss://.../ws
  *
- * Do not use a proxied URL like https://yoursite.com/backend — call the backend
- * origin directly so requests go to e.g. ...railway.app/api/chats.
- * The backend must allow CORS from your frontend origin.
+ * Use wss:// in production (TLS). Do not use ws:// on a page served over https.
+ * Backend must allow your frontend origin in CORS / WebSocket (e.g. https://atiumresearch.com).
  */
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
@@ -19,11 +19,12 @@ function apiUrl(path: string): string {
   return `${API_BASE}${API_PREFIX}${p}`;
 }
 
+/** WebSocket URL: same host as REST, path /ws, secure scheme (https → wss). */
 export function getWsUrl(): string {
   if (!API_BASE) return "";
-  const protocol = API_BASE.startsWith("https") ? "wss" : "ws";
-  const host = API_BASE.replace(/^https?:\/\//, "");
-  return host ? `${protocol}://${host}/ws` : "";
+  // https → wss, http → ws; then append /ws
+  const wsBase = API_BASE.replace(/^http/, "ws");
+  return `${wsBase}/ws`;
 }
 
 export function getApiBase(): string {
