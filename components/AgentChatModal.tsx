@@ -66,6 +66,12 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
     let cancelled = false;
     const wsUrl = getWsUrl();
 
+    if (!wsUrl) {
+      setError("NEXT_PUBLIC_API_URL is not set. WebSocket cannot connect.");
+      setConnectionStatus("error");
+      return;
+    }
+
     setConnectionStatus("connecting");
     setError(null);
     setChatId(project.id);
@@ -131,12 +137,11 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
         setConnectionStatus("closed");
         if (event.code !== 1000 && event.code !== 1005) {
           setConnectionStatus("error");
-          setError(
-            event.reason ||
-              (event.code === 1006
-                ? "Cannot reach server. Is the backend running at NEXT_PUBLIC_API_URL?"
-                : `WebSocket closed (${event.code})`),
-          );
+          const hint =
+            event.code === 1006
+              ? `Cannot reach server. Tried: ${wsUrl} — check NEXT_PUBLIC_API_URL is set at build time and backend allows WebSocket from your origin.`
+              : `WebSocket closed (${event.code})${event.reason ? `: ${event.reason}` : ""}`;
+          setError(event.reason || hint);
         }
       }
     };

@@ -1,8 +1,13 @@
 /**
  * at-backend integration: REST + WebSocket chat.
- * Backend: http://localhost:8000 (REST), ws://localhost:8000/ws (WebSocket).
- * Set NEXT_PUBLIC_API_URL to backend origin (e.g. http://localhost:8000).
- * If your backend uses /chats without /api, set NEXT_PUBLIC_API_PREFIX= (empty).
+ *
+ * Set NEXT_PUBLIC_API_URL to the backend origin only (no path):
+ * - Local:   http://localhost:8000
+ * - Railway: https://at-backend-production-8139.up.railway.app
+ *
+ * Do not use a proxied URL like https://yoursite.com/backend — call the backend
+ * origin directly so requests go to e.g. ...railway.app/api/chats.
+ * The backend must allow CORS from your frontend origin.
  */
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
@@ -15,8 +20,10 @@ function apiUrl(path: string): string {
 }
 
 export function getWsUrl(): string {
-  const base = API_BASE.replace(/^http/, "ws");
-  return `${base}/ws`;
+  if (!API_BASE) return "";
+  const protocol = API_BASE.startsWith("https") ? "wss" : "ws";
+  const host = API_BASE.replace(/^https?:\/\//, "");
+  return host ? `${protocol}://${host}/ws` : "";
 }
 
 export function getApiBase(): string {
