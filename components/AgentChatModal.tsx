@@ -72,6 +72,19 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
       return;
     }
 
+    // Production (HTTPS) but bundle has localhost → env was not set at build time
+    if (
+      typeof window !== "undefined" &&
+      window.location.protocol === "https:" &&
+      wsUrl.startsWith("ws://localhost")
+    ) {
+      setError(
+        "This build was compiled without NEXT_PUBLIC_API_URL for production. Set NEXT_PUBLIC_API_URL=https://at-backend-production-8139.up.railway.app (or your backend URL) in your hosting platform's environment variables (e.g. Vercel → Project → Settings → Environment Variables), then redeploy. The variable is inlined at build time.",
+      );
+      setConnectionStatus("error");
+      return;
+    }
+
     setConnectionStatus("connecting");
     setError(null);
     setChatId(project.id);
@@ -137,11 +150,18 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
         setConnectionStatus("closed");
         if (event.code !== 1000 && event.code !== 1005) {
           setConnectionStatus("error");
-          const hint =
-            event.code === 1006
-              ? `Cannot reach server. Tried: ${wsUrl} — check NEXT_PUBLIC_API_URL is set at build time and backend allows WebSocket from your origin.`
-              : `WebSocket closed (${event.code})${event.reason ? `: ${event.reason}` : ""}`;
-          setError(event.reason || hint);
+          let hint = event.reason;
+          if (!hint) {
+            if (event.code === 1006) {
+              hint =
+                "Cannot reach server. If the URL looks correct, the backend may be rejecting the connection: ensure your frontend origin (e.g. https://atiumresearch.com) is in the backend's ALLOWED_ORIGINS / CORS config for WebSocket.";
+            } else if (event.code === 1008) {
+              hint = "Backend rejected the connection (policy). Add your site's origin to the backend ALLOWED_ORIGINS.";
+            } else {
+              hint = `WebSocket closed (${event.code}).`;
+            }
+          }
+          setError(hint);
         }
       }
     };
