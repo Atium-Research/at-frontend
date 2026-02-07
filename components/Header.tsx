@@ -23,9 +23,6 @@ export default function Header() {
         className="h-0.5 w-54 rounded-full shadow-tron-glow-sm animate-tron-shimmer"
         aria-hidden
       />
-      <p className="text-xs text-gray-500 tracking-wide">
-        Agentic quant workflows
-      </p>
     </header>
   );
 }

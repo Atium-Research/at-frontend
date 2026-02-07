@@ -1,63 +1,58 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useEffect } from "react";
 import AgentChatModal, { type Project } from "./AgentChatModal";
+import NewProjectModal, { type NewProjectData } from "./NewProjectModal";
+import { listChats, createChat, type Chat } from "@/lib/chat-api";
 
-const projects: Project[] = [
-  {
-    id: "1",
-    title: "Momentum Strategy",
-    description:
-      "Multi-factor momentum trading strategy analyzing price trends and volume patterns across equity markets.",
+function chatToProject(chat: Chat): Project {
+  return {
+    id: chat.id,
+    title: chat.title,
+    description: "",
     status: "active",
-  },
-  {
-    id: "2",
-    title: "Signal Detection",
-    description:
-      "Real-time signal detection and classification for alpha generation using ML-based pattern recognition.",
-    status: "active",
-  },
-  {
-    id: "3",
-    title: "Mean Reversion Alpha",
-    description:
-      "Statistical arbitrage strategy identifying short-term mean reversion opportunities across correlated instruments.",
-    status: "active",
-  },
-  {
-    id: "4",
-    title: "Volatility Harvesting",
-    description:
-      "Options-based volatility surface trading and variance premium capture across indices and single names.",
-    status: "paused",
-  },
-  {
-    id: "5",
-    title: "Sentiment Analysis",
-    description:
-      "Alternative data pipeline combining news, social sentiment, and earnings call signals for directional bias.",
-    status: "active",
-  },
-  {
-    id: "6",
-    title: "Cross-Asset Correlation",
-    description:
-      "Dynamic correlation and regime detection for portfolio construction and risk allocation.",
-    status: "active",
-  },
-];
-
-const activeCount = projects.filter((p) => p.status === "active").length;
+  };
+}
 
 export default function ProjectsWithChat() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [chatModalOpen, setChatModalOpen] = useState(false);
+  const [newProjectModalOpen, setNewProjectModalOpen] = useState(false);
 
-  function openChat(project: Project) {
+  useEffect(() => {
+    setProjectsLoading(true);
+    setProjectsError(null);
+    listChats()
+      .then((chats) => setProjects(chats.map(chatToProject)))
+      .catch((err) => setProjectsError(err instanceof Error ? err.message : "Failed to load projects"))
+      .finally(() => setProjectsLoading(false));
+  }, []);
+
+  const activeCount = projects.filter((p) => p.status === "active").length;
+
+  const openChat = useCallback((project: Project) => {
     setSelectedProject(project);
-    setModalOpen(true);
-  }
+    setChatModalOpen(true);
+  }, []);
+
+  const handleCreateProject = useCallback(
+    async (data: NewProjectData) => {
+      const chat = await createChat(data.title);
+      const project: Project = {
+        id: chat.id,
+        title: chat.title,
+        description: data.description || "",
+        status: "active",
+      };
+      setProjects((prev) => [project, ...prev]);
+      setNewProjectModalOpen(false);
+      openChat(project);
+    },
+    [openChat],
+  );
 
   return (
     <>
@@ -69,12 +64,23 @@ export default function ProjectsWithChat() {
         </div>
         <button
           type="button"
+          onClick={() => setNewProjectModalOpen(true)}
           className="flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg border border-tron-blue/60 bg-tron-blue/5 px-4 py-2.5 text-sm font-medium text-tron-blue shadow-tron-glow-sm transition-all duration-200 hover:border-tron-blue hover:bg-tron-blue/10 hover:shadow-tron-glow sm:min-h-0 sm:min-w-0"
         >
           <PlusIcon className="h-5 w-5 shrink-0" />
           <span>New Project</span>
         </button>
       </div>
+      {projectsError && (
+        <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          {projectsError}
+        </p>
+      )}
+      {projectsLoading ? (
+        <div className="flex items-center justify-center py-12 text-gray-500">
+          Loading projects…
+        </div>
+      ) : (
       <ul className="flex flex-col gap-3">
         {projects.map((project) => (
           <li key={project.id}>
@@ -112,10 +118,16 @@ export default function ProjectsWithChat() {
           </li>
         ))}
       </ul>
+      )}
+      <NewProjectModal
+        open={newProjectModalOpen}
+        onClose={() => setNewProjectModalOpen(false)}
+        onCreate={handleCreateProject}
+      />
       <AgentChatModal
         project={selectedProject}
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        open={chatModalOpen}
+        onClose={() => setChatModalOpen(false)}
       />
     </>
   );

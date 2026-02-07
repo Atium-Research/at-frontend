@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   getWsUrl,
-  createChat,
   makeSubscribeMessage,
   makeChatMessage,
   type IncomingMessage,
@@ -69,107 +68,93 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
 
     setConnectionStatus("connecting");
     setError(null);
+    setChatId(project.id);
 
-    createChat(project?.title)
-      .then((chat) => {
-        if (cancelled) return;
-        setChatId(chat.id);
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
+    ws.onopen = () => {
+      if (cancelled || !wsRef.current) return;
+      setConnectionStatus("open");
+      ws.send(makeSubscribeMessage(project.id));
+    };
 
-        ws.onopen = () => {
-          if (cancelled || !wsRef.current) return;
-          setConnectionStatus("open");
-          ws.send(makeSubscribeMessage(chat.id));
-        };
-
-        ws.onmessage = (event) => {
-          if (cancelled) return;
-          try {
-            const data = JSON.parse(event.data) as IncomingMessage;
-            console.log(data);
-            switch (data.type) {
-              case "connected":
-                break;
-              case "history":
-                setMessages(chatMessagesToDisplay(data.messages ?? []));
-                break;
-              case "user_message":
-                break;
-              case "assistant_message": {
-                const delta = (data.content ?? "") as string;
-                setMessages((prev) => {
-                  const last = prev[prev.length - 1];
-                  if (last?.role === "agent") {
-                    return [
-                      ...prev.slice(0, -1),
-                      { role: "agent", content: last.content + delta },
-                    ];
-                  }
-                  return [...prev, { role: "agent", content: delta }];
-                });
-                setLoading(false);
-                break;
+    ws.onmessage = (event) => {
+      if (cancelled) return;
+      try {
+        const data = JSON.parse(event.data) as IncomingMessage;
+        switch (data.type) {
+          case "connected":
+            break;
+          case "history":
+            setMessages(chatMessagesToDisplay(data.messages ?? []));
+            break;
+          case "user_message":
+            break;
+          case "assistant_message": {
+            const delta = (data.content ?? "") as string;
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last?.role === "agent") {
+                return [
+                  ...prev.slice(0, -1),
+                  { role: "agent", content: last.content + delta },
+                ];
               }
-              case "agent_status":
-                setAgentStatus(data.message ?? null);
-                break;
-              case "tool_use":
-                break;
-              case "result":
-                setAgentStatus(null);
-                setLoading(false);
-                break;
-              case "error":
-                setAgentStatus(null);
-                setError(data.error ?? "Error");
-                setLoading(false);
-                break;
-              default:
-                break;
-            }
-          } catch {}
-        };
-
-        ws.onclose = (event) => {
-          if (!cancelled) {
-            setConnectionStatus("closed");
-            if (event.code !== 1000 && event.code !== 1005) {
-              setConnectionStatus("error");
-              setError(
-                event.reason ||
-                  (event.code === 1006
-                    ? "Cannot reach server. Is the backend running at NEXT_PUBLIC_API_URL?"
-                    : `WebSocket closed (${event.code})`),
-              );
-            }
+              return [...prev, { role: "agent", content: delta }];
+            });
+            setLoading(false);
+            break;
           }
-        };
-
-        ws.onerror = () => {
-          if (!cancelled) {
-            setConnectionStatus("error");
-            setError(
-              "WebSocket error. Check backend is running and NEXT_PUBLIC_API_URL is correct.",
-            );
-          }
-        };
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Failed to create chat",
-          );
-          setConnectionStatus("error");
+          case "agent_status":
+            setAgentStatus(data.message ?? null);
+            break;
+          case "tool_use":
+            break;
+          case "result":
+            setAgentStatus(null);
+            setLoading(false);
+            break;
+          case "error":
+            setAgentStatus(null);
+            setError(data.error ?? "Error");
+            setLoading(false);
+            break;
+          default:
+            break;
         }
-      });
+      } catch {}
+    };
+
+    ws.onclose = (event) => {
+      if (!cancelled) {
+        setConnectionStatus("closed");
+        if (event.code !== 1000 && event.code !== 1005) {
+          setConnectionStatus("error");
+          setError(
+            event.reason ||
+              (event.code === 1006
+                ? "Cannot reach server. Is the backend running at NEXT_PUBLIC_API_URL?"
+                : `WebSocket closed (${event.code})`),
+          );
+        }
+      }
+    };
+
+    ws.onerror = () => {
+      if (!cancelled) {
+        setConnectionStatus("error");
+        setError(
+          "WebSocket error. Check backend is running and NEXT_PUBLIC_API_URL is correct.",
+        );
+      }
+    };
 
     return () => {
       cancelled = true;
       closeWs();
     };
-  }, [open, project?.id, project?.title, closeWs]);
+  }, [open, project?.id, closeWs]);
 
   useEffect(() => {
     listRef.current?.scrollTo({
