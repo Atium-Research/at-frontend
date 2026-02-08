@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { createChat, listChats } from "@/lib/chat-api";
 import AgentChatModal, { type Project } from "./AgentChatModal";
+import NewProjectModal, { type NewProjectData } from "./NewProjectModal";
+import { listChats, createChat, type Chat } from "@/lib/chat-api";
 
 function chatToProject(chat: { id: string; title: string }): Project {
   return {
@@ -49,8 +51,24 @@ export default function ProjectsWithChat() {
   function openChat(project: Project) {
     setResearchParams(null);
     setSelectedProject(project);
-    setModalOpen(true);
-  }
+    setChatModalOpen(true);
+  }, []);
+
+  const handleCreateProject = useCallback(
+    async (data: NewProjectData) => {
+      const chat = await createChat(data.title);
+      const project: Project = {
+        id: chat.id,
+        title: chat.title,
+        description: data.description || "",
+        status: "active",
+      };
+      setProjects((prev) => [project, ...prev]);
+      setNewProjectModalOpen(false);
+      openChat(project);
+    },
+    [openChat],
+  );
 
   async function startResearchProject() {
     const topic = researchTopic.trim();
@@ -225,6 +243,12 @@ export default function ProjectsWithChat() {
           </li>
         ))}
       </ul>
+      )}
+      <NewProjectModal
+        open={newProjectModalOpen}
+        onClose={() => setNewProjectModalOpen(false)}
+        onCreate={handleCreateProject}
+      />
       <AgentChatModal
         project={selectedProject}
         open={modalOpen}

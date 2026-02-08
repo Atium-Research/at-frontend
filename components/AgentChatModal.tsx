@@ -80,6 +80,7 @@ export default function AgentChatModal({
     setChatId(chatIdForSession);
     setConnectionStatus("connecting");
     setError(null);
+    setChatId(project.id);
 
     let cancelled = false;
     const wsUrl = getWsUrl();
@@ -136,16 +137,17 @@ export default function AgentChatModal({
               line = `Read: ${input.path}`;
             else if (input && Object.keys(input).length > 0)
               line = `${name}: ${JSON.stringify(input).slice(0, 80)}…`;
-            setMessages((prev) => [
-              ...prev,
-              { role: "tool", content: line },
-            ]);
+            setMessages((prev) => [...prev, { role: "tool", content: line }]);
             break;
           }
           case "result": {
             setAgentStatus(null);
             setLoading(false);
-            const res = data as { success: boolean; cost?: number; duration_ms?: number };
+            const res = data as {
+              success: boolean;
+              cost?: number;
+              duration_ms?: number;
+            };
             const parts = [res.success ? "Completed" : "Failed"];
             if (res.cost != null) parts.push(`$${Number(res.cost).toFixed(4)}`);
             if (res.duration_ms != null) parts.push(`${res.duration_ms}ms`);
@@ -200,7 +202,7 @@ export default function AgentChatModal({
       cancelled = true;
       closeWs();
     };
-  }, [open, project?.id, project?.title, closeWs]);
+  }, [open, project?.id, closeWs]);
 
   // Send research only after subscribe has been sent (connectionStatus "open").
   // One JSON message only; no extra subscribe or other message after this.
