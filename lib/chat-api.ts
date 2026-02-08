@@ -91,7 +91,12 @@ export type IncomingMessage =
   | { type: "result"; success: boolean; chatId: string; cost?: number; duration_ms?: number }
   | { type: "error"; error: string; chatId: string };
 
-/** Client → server: subscribe to a chat */
+/**
+ * One JSON object per WebSocket message. Never concatenate multiple JSON objects
+ * in one send. Backend processes one message at a time.
+ */
+
+/** Client → server: subscribe to a chat. Send exactly once after connection open. */
 export function makeSubscribeMessage(chatId: string): string {
   return JSON.stringify({ type: "subscribe", chatId });
 }
@@ -99,4 +104,23 @@ export function makeSubscribeMessage(chatId: string): string {
 /** Client → server: send user message */
 export function makeChatMessage(chatId: string, content: string): string {
   return JSON.stringify({ type: "chat", chatId, content });
+}
+
+/**
+ * Client → server: start Research Project Agent.
+ * Send only after subscribe has been sent (same tick is fine). One message only.
+ * Payload must have: type "research", chatId (same as subscribe), topic, repo_name (string | null).
+ */
+export function makeResearchMessage(
+  chatId: string,
+  topic: string,
+  repoName?: string | null
+): string {
+  const payload = {
+    type: "research" as const,
+    chatId,
+    topic,
+    repo_name: repoName === undefined || repoName === "" ? null : repoName,
+  };
+  return JSON.stringify(payload);
 }

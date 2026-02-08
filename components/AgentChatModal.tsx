@@ -3,9 +3,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   getWsUrl,
-  createChat,
   makeSubscribeMessage,
   makeChatMessage,
+  makeResearchMessage,
   type IncomingMessage,
   type ChatMessage as ApiChatMessage,
 } from "@/lib/chat-api";
@@ -17,12 +17,15 @@ export type Project = {
   status: "active" | "paused";
 };
 
-type Message = { role: "user" | "agent"; content: string };
+type Message = { role: "user" | "agent" | "tool"; content: string };
 
 type Props = {
   project: Project | null;
   open: boolean;
   onClose: () => void;
+  /** When set, send a research start message once the WebSocket is open */
+  researchParams?: { topic: string; repo_name?: string } | null;
+  onResearchStarted?: () => void;
 };
 
 function chatMessagesToDisplay(messages: ApiChatMessage[]): Message[] {
@@ -32,7 +35,13 @@ function chatMessagesToDisplay(messages: ApiChatMessage[]): Message[] {
   }));
 }
 
-export default function AgentChatModal({ project, open, onClose }: Props) {
+export default function AgentChatModal({
+  project,
+  open,
+  onClose,
+  researchParams,
+  onResearchStarted,
+}: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -44,6 +53,7 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const researchSentRef = useRef(false);
 
   const closeWs = useCallback(() => {
     if (wsRef.current) {
@@ -60,116 +70,168 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
       setError(null);
       setChatId(null);
       setAgentStatus(null);
+      researchSentRef.current = false;
       closeWs();
       return;
     }
+    researchSentRef.current = false;
 
-    let cancelled = false;
-    const wsUrl = getWsUrl();
-
+    const chatIdForSession = project.id;
+    setChatId(chatIdForSession);
     setConnectionStatus("connecting");
     setError(null);
 
-    createChat(project?.title)
-      .then((chat) => {
-        if (cancelled) return;
-        setChatId(chat.id);
+    let cancelled = false;
+    const wsUrl = getWsUrl();
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
+    ws.onopen = () => {
+      if (cancelled || !wsRef.current) return;
+      setConnectionStatus("open");
+      // Send exactly one message: subscribe. Do not send anything else in this tick.
+      ws.send(makeSubscribeMessage(chatIdForSession));
+    };
 
-        ws.onopen = () => {
-          if (cancelled || !wsRef.current) return;
-          setConnectionStatus("open");
-          ws.send(makeSubscribeMessage(chat.id));
-        };
-
-        ws.onmessage = (event) => {
-          if (cancelled) return;
-          try {
-            const data = JSON.parse(event.data) as IncomingMessage;
-            console.log(data);
-            switch (data.type) {
-              case "connected":
-                break;
-              case "history":
-                setMessages(chatMessagesToDisplay(data.messages ?? []));
-                break;
-              case "user_message":
-                break;
-              case "assistant_message": {
-                const delta = (data.content ?? "") as string;
-                setMessages((prev) => {
-                  const last = prev[prev.length - 1];
-                  if (last?.role === "agent") {
-                    return [
-                      ...prev.slice(0, -1),
-                      { role: "agent", content: last.content + delta },
-                    ];
-                  }
-                  return [...prev, { role: "agent", content: delta }];
-                });
-                setLoading(false);
-                break;
+    ws.onmessage = (event) => {
+      if (cancelled) return;
+      try {
+        const data = JSON.parse(event.data) as IncomingMessage;
+        // Do not send any WebSocket message from here (e.g. no second subscribe on history).
+        switch (data.type) {
+          case "connected":
+            break;
+          case "history":
+            setMessages(chatMessagesToDisplay(data.messages ?? []));
+            break;
+          case "user_message":
+            break;
+          case "assistant_message": {
+            const delta = (data.content ?? "") as string;
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last?.role === "agent") {
+                return [
+                  ...prev.slice(0, -1),
+                  { role: "agent", content: last.content + delta },
+                ];
               }
-              case "agent_status":
-                setAgentStatus(data.message ?? null);
-                break;
-              case "tool_use":
-                break;
-              case "result":
-                setAgentStatus(null);
-                setLoading(false);
-                break;
-              case "error":
-                setAgentStatus(null);
-                setError(data.error ?? "Error");
-                setLoading(false);
-                break;
-              default:
-                break;
-            }
-          } catch {}
-        };
-
-        ws.onclose = (event) => {
-          if (!cancelled) {
-            setConnectionStatus("closed");
-            if (event.code !== 1000 && event.code !== 1005) {
-              setConnectionStatus("error");
-              setError(
-                event.reason ||
-                  (event.code === 1006
-                    ? "Cannot reach server. Is the backend running at NEXT_PUBLIC_API_URL?"
-                    : `WebSocket closed (${event.code})`),
-              );
-            }
+              return [...prev, { role: "agent", content: delta }];
+            });
+            setLoading(false);
+            break;
           }
-        };
-
-        ws.onerror = () => {
-          if (!cancelled) {
-            setConnectionStatus("error");
+          case "agent_status":
+            setAgentStatus(data.message ?? null);
+            break;
+          case "tool_use": {
+            const name = data.toolName ?? "Tool";
+            const input = data.toolInput as Record<string, unknown> | undefined;
+            let line = name;
+            if (name === "Bash" && input?.command)
+              line = `Bash: $ ${String(input.command).trim().split("\n")[0]}`;
+            else if ((name === "Write" || name === "Edit") && input?.path)
+              line = `${name}: ${input.path}`;
+            else if (name === "Read" && input?.path)
+              line = `Read: ${input.path}`;
+            else if (input && Object.keys(input).length > 0)
+              line = `${name}: ${JSON.stringify(input).slice(0, 80)}…`;
+            setMessages((prev) => [
+              ...prev,
+              { role: "tool", content: line },
+            ]);
+            break;
+          }
+          case "result": {
+            setAgentStatus(null);
+            setLoading(false);
+            const res = data as { success: boolean; cost?: number; duration_ms?: number };
+            const parts = [res.success ? "Completed" : "Failed"];
+            if (res.cost != null) parts.push(`$${Number(res.cost).toFixed(4)}`);
+            if (res.duration_ms != null) parts.push(`${res.duration_ms}ms`);
+            setMessages((prev) => [
+              ...prev,
+              { role: "tool", content: parts.join(" · ") },
+            ]);
+            break;
+          }
+          case "error": {
+            setAgentStatus(null);
+            const errMsg = data.error ?? "Error";
             setError(
-              "WebSocket error. Check backend is running and NEXT_PUBLIC_API_URL is correct.",
+              errMsg === "Invalid message format"
+                ? "Invalid message format. Ensure the backend supports the research flow (WebSocket type: research)."
+                : errMsg,
             );
+            setLoading(false);
+            break;
           }
-        };
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Failed to create chat",
-          );
-          setConnectionStatus("error");
+          default:
+            break;
         }
-      });
+      } catch {}
+    };
+
+    ws.onclose = (event) => {
+      if (!cancelled) {
+        setConnectionStatus("closed");
+        if (event.code !== 1000 && event.code !== 1005) {
+          setConnectionStatus("error");
+          setError(
+            event.reason ||
+              (event.code === 1006
+                ? "Cannot reach server. Is the backend running at NEXT_PUBLIC_API_URL?"
+                : `WebSocket closed (${event.code})`),
+          );
+        }
+      }
+    };
+
+    ws.onerror = () => {
+      if (!cancelled) {
+        setConnectionStatus("error");
+        setError(
+          "WebSocket error. Check backend is running and NEXT_PUBLIC_API_URL is correct.",
+        );
+      }
+    };
 
     return () => {
       cancelled = true;
       closeWs();
     };
   }, [open, project?.id, project?.title, closeWs]);
+
+  // Send research only after subscribe has been sent (connectionStatus "open").
+  // One JSON message only; no extra subscribe or other message after this.
+  useEffect(() => {
+    if (
+      connectionStatus !== "open" ||
+      !chatId ||
+      !researchParams ||
+      researchSentRef.current ||
+      !wsRef.current ||
+      wsRef.current.readyState !== WebSocket.OPEN
+    )
+      return;
+    researchSentRef.current = true;
+    const payload = makeResearchMessage(
+      chatId,
+      researchParams.topic,
+      researchParams.repo_name,
+    );
+    wsRef.current.send(payload);
+    onResearchStarted?.();
+    setLoading(true);
+    setError(null);
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "user",
+        content: `Research: ${researchParams.topic}${researchParams.repo_name ? ` (repo: ${researchParams.repo_name})` : ""}`,
+      },
+    ]);
+  }, [connectionStatus, chatId, researchParams, onResearchStarted]);
 
   useEffect(() => {
     listRef.current?.scrollTo({
@@ -261,7 +323,9 @@ export default function AgentChatModal({ project, open, onClose }: Props) {
                   className={`max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${
                     m.role === "user"
                       ? "bg-tron-blue/20 text-tron-blue border border-tron-blue/30"
-                      : "bg-gray-800/80 text-gray-200 border border-gray-700/50"
+                      : m.role === "tool"
+                        ? "border border-amber-500/20 bg-amber-500/5 text-amber-200/90 font-mono text-xs"
+                        : "bg-gray-800/80 text-gray-200 border border-gray-700/50"
                   }`}
                 >
                   {m.content}
