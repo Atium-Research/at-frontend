@@ -1,9 +1,17 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
-import LayoutShell from "@/components/LayoutShell";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "Atium Research",
+  title: "Atium Research — Learn Quantitative Finance from First Principles",
+  description:
+    "Simple explanations, practical examples, and transparent strategies that show how systematic investing actually works.",
 };
 
 export default function RootLayout({
@@ -13,9 +21,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen">
-        <LayoutShell>{children}</LayoutShell>
-      </body>
+      <body className={`min-h-screen ${inter.className}`}>{children}</body>
     </html>
   );
 }
